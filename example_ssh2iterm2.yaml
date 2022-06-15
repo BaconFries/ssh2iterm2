@@ -1,0 +1,7 @@
+aws: true
+aws-profile: neto
+aws-region: us-east-1
+json: false
+glob: ~/.ssh/**/*.json
+automatic-profile-switching: false
+domain-suffix: .netog.io
