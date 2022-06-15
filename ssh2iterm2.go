@@ -12,12 +12,18 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/google/gops/agent"
 	"github.com/google/uuid"
 	"github.com/kevinburke/ssh_config"
 	"github.com/mattn/go-isatty"
 	"github.com/mitchellh/go-homedir"
 	"github.com/rjeczalik/notify"
+	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 	"github.com/urfave/cli/altsrc"
 	"github.com/youtube/vitess/go/ioutil2"
@@ -40,6 +46,13 @@ type profile struct {
 	Triggers      *triggerlist `json:",omitempty"`
 	Tags          []string     `json:",omitempty"`
 	BoundHosts    []string     `json:"Bound Hosts,omitempty"`
+}
+
+type hostjson struct {
+	Name      string `json:"name"`
+	Subsystem string `json:"subsystem"`
+	Site      string `json:"site"`
+	Comment   string `json:"comment"`
 }
 
 type triggerlist []*trigger
@@ -87,6 +100,31 @@ func main() {
 	}
 
 	app.Flags = []cli.Flag{
+		altsrc.NewStringFlag(cli.StringFlag{
+			Name:   "domain-suffix",
+			Usage:  "Domain name suffix",
+			EnvVar: "SSH2ITERM2_DN_SUFFIX",
+		}),
+		altsrc.NewStringFlag(cli.StringFlag{
+			Name:   "aws-profile",
+			Usage:  "aws profile name",
+			EnvVar: "SSH2ITERM2_AWS_PROFILE",
+		}),
+		altsrc.NewStringFlag(cli.StringFlag{
+			Name:   "aws-region",
+			Usage:  "aws region",
+			EnvVar: "SSH2ITERM2_AWS_REGION",
+		}),
+		altsrc.NewBoolFlag(cli.BoolFlag{
+			Name:   "aws",
+			Usage:  "search aws for hosts",
+			EnvVar: "SSH2ITERM2_AWS",
+		}),
+		altsrc.NewBoolFlag(cli.BoolFlag{
+			Name:   "json",
+			Usage:  "A json host file use bool",
+			EnvVar: "SSH2ITERM2_JSON",
+		}),
 		altsrc.NewStringFlag(cli.StringFlag{
 			Name:      "glob",
 			Value:     userHomeDir + "/.ssh/config",
@@ -173,29 +211,61 @@ func ssh2iterm2(c *cli.Context) error {
 	if err != nil {
 		return err
 	}
-
-	glob, err := homedir.Expand(c.GlobalString("glob"))
-	if err != nil {
-		return err
-	}
-
-	log.Printf("Glob is %q", glob)
-
-	files, err := filepath.Glob(glob)
-	if err != nil {
-		return err
-	}
-
 	r := regexp.MustCompile(`\*`)
-
 	profiles := &profilelist{}
-
 	automaticProfileSwitching := c.GlobalBool("automatic-profile-switching")
+	found := c.GlobalBool("json")
+	suf := c.GlobalString("domain-suffix")
 	ssh := c.GlobalString("ssh")
 	log.Printf("SSH cli is %q", ssh)
 
-	for _, file := range files {
-		processFile(file, r, ssh, ns, profiles, automaticProfileSwitching)
+	if c.GlobalBool("aws") {
+		awsSession := awsCreds(c.GlobalString("aws-profile"), c.GlobalString("aws-region"))
+		awsmap, err := Ec2IntMapper(awsSession)
+		if err != nil {
+			return err
+		}
+		var hj []hostjson
+		//fmt.Printf("%+v\n", awsmap)
+		for _, am := range awsmap {
+			//fmt.Printf("%+v\n", am)
+			if am["Subsystem"] == "portal" || strings.Contains(am["Name"], "dev-") || strings.Contains(am["Name"], "local-") {
+				continue
+			}
+			hj = append(hj, hostjson{
+				Name:      am["Name"],
+				Subsystem: strings.ToLower(am["Subsystem"]),
+				Site:      am["Site"],
+				Comment:   "",
+			})
+		}
+		processJson(hj, r, ssh, ns, profiles, automaticProfileSwitching, suf)
+	} else {
+		glob, err := homedir.Expand(c.GlobalString("glob"))
+		if err != nil {
+			return err
+		}
+
+		log.Printf("Glob is %q", glob)
+
+		files, err := filepath.Glob(glob)
+		if err != nil {
+			return err
+		}
+
+		for _, file := range files {
+			if found {
+				var hj []hostjson
+				var fileContent *os.File
+				byteValue, _ := ioutil.ReadAll(fileContent)
+				if err := json.Unmarshal(byteValue, &hj); err != nil {
+					panic(err)
+				}
+				processJson(hj, r, ssh, ns, profiles, automaticProfileSwitching, suf)
+			} else {
+				processFile(file, r, ssh, ns, profiles, automaticProfileSwitching)
+			}
+		}
 	}
 
 	json, err := json.MarshalIndent(profiles, "", "    ")
@@ -214,8 +284,9 @@ func ssh2iterm2(c *cli.Context) error {
 	}
 
 	log.Printf("Writing %q", dynamicProfileFile)
-	err = ioutil2.WriteFileAtomic(dynamicProfileFile, json, 0600)
+	//fmt.Printf("%+v\n", string(json))
 
+	err = ioutil2.WriteFileAtomic(dynamicProfileFile, json, 0600)
 	if err != nil {
 		return err
 	}
@@ -238,13 +309,11 @@ func processFile(file string,
 		log.Print(err)
 		return
 	}
-
 	cfg, err := ssh_config.Decode(fileContent)
 	if err != nil {
 		log.Print(err)
 		return
 	}
-
 	tag := tag(file)
 
 	for _, host := range cfg.Hosts {
@@ -277,9 +346,9 @@ func processFile(file string,
 					CustomCommand: "Yes",
 					Triggers: &triggerlist{&trigger{
 						Partial:   true,
-						Parameter: hostname,
-						Regex:     "\\[sudo\\] password for",
-						Action:    "PasswordTrigger",
+						Parameter: "\\1@\\2\n\\1@\\2",
+						Regex:     "^\\[?([\\w-.]+)@([\\w.]+)",
+						Action:    "SetHostnameTrigger",
 					}},
 					Tags:       []string{tag},
 					BoundHosts: boundHosts,
@@ -287,6 +356,63 @@ func processFile(file string,
 			}
 		}
 	}
+
+}
+
+//nolint:funlen // needs refactoring.
+func processJson(hj []hostjson,
+	r *regexp.Regexp,
+	ssh string,
+	ns uuid.UUID,
+	profiles *profilelist,
+	automaticProfileSwitching bool,
+	domain_suffix string,
+) {
+
+	for _, host := range hj {
+
+		hostname := host.Name
+		name := hostname
+		badge := hostname
+		comment := host.Comment
+		tag := host.Subsystem
+		if len(host.Site) > 0 {
+			tag = fmt.Sprintf("%s/%s", host.Site, host.Subsystem)
+		}
+		if comment != "" {
+			badge = comment
+			name = fmt.Sprintf("%s (%s)", hostname, comment)
+		}
+
+		match := r.MatchString(name)
+		if !match {
+			uuid := uuid.NewSHA1(ns, []byte(name)).String()
+			log.Printf("Identified %s", name)
+
+			var boundHosts []string
+			if automaticProfileSwitching {
+				boundHosts = []string{hostname}
+			}
+
+			profiles.Profiles = append(profiles.Profiles, &profile{
+				Badge:         badge,
+				GUID:          uuid,
+				Name:          name,
+				Command:       fmt.Sprintf("%q %q", ssh, hostname+domain_suffix),
+				CustomCommand: "Yes",
+				Triggers: &triggerlist{&trigger{
+					Partial:   true,
+					Parameter: "\\1@\\2\n\\1@\\2",
+					Regex:     "^\\[?([\\w-.]+)@([\\w.]+)",
+					Action:    "SetHostnameTrigger",
+				}},
+				Tags:       []string{tag},
+				BoundHosts: boundHosts,
+			})
+		}
+
+	}
+
 }
 
 func tag(filename string) string {
@@ -324,6 +450,7 @@ func watch(c *cli.Context) error {
 }
 
 type config struct {
+	Json string `yaml:"json"`
 	Glob string `yaml:"glob"`
 	SSH  string `yaml:"ssh"`
 }
@@ -333,6 +460,7 @@ func editConfig(c *cli.Context) error {
 
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
 		err := createConfig(configFile, config{
+			Json: c.GlobalString("json"),
 			Glob: c.GlobalString("glob"),
 			SSH:  c.GlobalString("ssh"),
 		})
@@ -364,3 +492,54 @@ func createConfig(configFile string, config config) error {
 
 	return nil
 } //nolint:gofumpt // false lint error with golangci-lint.
+
+func awsCreds(profile, region string) *session.Session {
+	sess, err := session.NewSession(&aws.Config{
+		Region:      aws.String(region),
+		Credentials: credentials.NewSharedCredentials("", profile),
+	})
+	if err != nil {
+		fmt.Printf("AWS Session Error: %+v\n", err)
+		os.Exit(1)
+	}
+	return sess
+}
+
+// Ec2IntMapper creates map of ec2 instances IDs and their tags
+func Ec2IntMapper(s *session.Session) (map[string]map[string]string, error) {
+
+	ec2IntMap := make(map[string]map[string]string)
+	if s != nil {
+		svc := ec2.New(s)
+		input := &ec2.DescribeInstancesInput{}
+		res, err := svc.DescribeInstances(input)
+		if err != nil {
+			if aerr, ok := err.(awserr.Error); ok {
+				switch aerr.Code() {
+				default:
+					logrus.WithFields(logrus.Fields{
+						"error": aerr,
+					}).Error("Unable to fetch Instance info from AWS")
+				}
+			} else {
+				logrus.WithFields(logrus.Fields{
+					"error": err,
+				}).Error("Unable to fetch Instance info from AWS")
+			}
+			return ec2IntMap, err
+		}
+		for _, a := range res.Reservations {
+			for _, b := range a.Instances {
+				tags := make(map[string]string)
+				for _, t := range b.Tags {
+					if strings.HasPrefix(*t.Key, "aws:") {
+						continue
+					}
+					tags[*t.Key] = *t.Value
+				}
+				ec2IntMap[*b.InstanceId] = tags
+			}
+		}
+	}
+	return ec2IntMap, nil
+}
