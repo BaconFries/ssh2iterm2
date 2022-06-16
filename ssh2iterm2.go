@@ -229,7 +229,7 @@ func ssh2iterm2(c *cli.Context) error {
 		//fmt.Printf("%+v\n", awsmap)
 		for _, am := range awsmap {
 			//fmt.Printf("%+v\n", am)
-			if am["Subsystem"] == "portal" || strings.Contains(am["Name"], "dev-") || strings.Contains(am["Name"], "local-") {
+			if am["Subsystem"] == "portal" {
 				continue
 			}
 			hj = append(hj, hostjson{
@@ -347,7 +347,7 @@ func processFile(file string,
 					Triggers: &triggerlist{&trigger{
 						Partial:   true,
 						Parameter: "\\1@\\2\n\\1@\\2",
-						Regex:     "^\\[?([\\w-.]+)@([\\w.]+)",
+						Regex:     "^\\[?([\\w-.]+)@([\\w-.]+)",
 						Action:    "SetHostnameTrigger",
 					}},
 					Tags:       []string{tag},
