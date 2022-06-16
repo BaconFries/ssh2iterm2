@@ -403,7 +403,7 @@ func processJson(hj []hostjson,
 				Triggers: &triggerlist{&trigger{
 					Partial:   true,
 					Parameter: "\\1@\\2\n\\1@\\2",
-					Regex:     "^\\[?([\\w-.]+)@([\\w.]+)",
+					Regex:     "^\\[?([\\w-.]+)@([\\w-.]+)",
 					Action:    "SetHostnameTrigger",
 				}},
 				Tags:       []string{tag},
