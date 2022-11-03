@@ -49,10 +49,11 @@ type profile struct {
 }
 
 type hostjson struct {
-	Name      string `json:"name"`
-	Subsystem string `json:"subsystem"`
-	Site      string `json:"site"`
-	Comment   string `json:"comment"`
+	Name             string `json:"name"`
+	PrivateIpAddress string `json:"privateip"`
+	Subsystem        string `json:"subsystem"`
+	Site             string `json:"site"`
+	Comment          string `json:"comment"`
 }
 
 type triggerlist []*trigger
@@ -226,17 +227,17 @@ func ssh2iterm2(c *cli.Context) error {
 			return err
 		}
 		var hj []hostjson
-		//fmt.Printf("%+v\n", awsmap)
 		for _, am := range awsmap {
-			//fmt.Printf("%+v\n", am)
 			if am["Subsystem"] == "portal" {
-				continue
+				fmt.Printf("%+v\n", am["Name"])
+				fmt.Printf("%+v\n", am["PrivateIP"])
 			}
 			hj = append(hj, hostjson{
-				Name:      am["Name"],
-				Subsystem: strings.ToLower(am["Subsystem"]),
-				Site:      am["Site"],
-				Comment:   "",
+				Name:             am["Name"],
+				PrivateIpAddress: am["PrivateIpAddress"],
+				Subsystem:        strings.ToLower(am["Subsystem"]),
+				Site:             am["Site"],
+				Comment:          "",
 			})
 		}
 		processJson(hj, r, ssh, ns, profiles, automaticProfileSwitching, suf)
@@ -374,6 +375,7 @@ func processJson(hj []hostjson,
 		hostname := host.Name
 		name := hostname
 		badge := hostname
+		ip := host.PrivateIpAddress
 		comment := host.Comment
 		tag := host.Subsystem
 		if len(host.Site) > 0 {
@@ -386,6 +388,13 @@ func processJson(hj []hostjson,
 
 		match := r.MatchString(name)
 		if !match {
+			c := fmt.Sprintf("%q %q", ssh, hostname+domain_suffix)
+			if !strings.Contains(name, ".") {
+				name = fmt.Sprintf("%s-%s", name, ip)
+				badge = name
+				c = fmt.Sprintf("%q -o %q %q", ssh, "StrictHostKeyChecking=no", "ec2-user@"+ip)
+			}
+
 			uuid := uuid.NewSHA1(ns, []byte(name)).String()
 			log.Printf("Identified %s", name)
 
@@ -398,7 +407,7 @@ func processJson(hj []hostjson,
 				Badge:         badge,
 				GUID:          uuid,
 				Name:          name,
-				Command:       fmt.Sprintf("%q %q", ssh, hostname+domain_suffix),
+				Command:       c,
 				CustomCommand: "Yes",
 				Triggers: &triggerlist{&trigger{
 					Partial:   true,
@@ -528,6 +537,7 @@ func Ec2IntMapper(s *session.Session) (map[string]map[string]string, error) {
 			}
 			return ec2IntMap, err
 		}
+		//fmt.Printf("res: %+v\n", res)
 		for _, a := range res.Reservations {
 			for _, b := range a.Instances {
 				tags := make(map[string]string)
@@ -537,6 +547,10 @@ func Ec2IntMapper(s *session.Session) (map[string]map[string]string, error) {
 					}
 					tags[*t.Key] = *t.Value
 				}
+				if b.PrivateIpAddress != nil {
+					tags["PrivateIpAddress"] = *b.PrivateIpAddress
+				}
+
 				ec2IntMap[*b.InstanceId] = tags
 			}
 		}
