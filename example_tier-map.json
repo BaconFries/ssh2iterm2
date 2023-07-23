@@ -1,0 +1,13 @@
+{
+    "esfh": "hot",
+    "esfw": "warm",
+    "esfm": "master",
+    "esfq": "query",
+    "ui": "kibana",
+    "!production": "production",
+    "!production-v2": "production-v2",
+    "!production-api-ingest": "production-api-ingest",
+    "!production-api-ingest-v2": "production-api-ingest-v2",
+    "!production-api-beta": "production-api-beta",
+    "!production-api-beta-v2": "production-api-beta-v2"
+}
