@@ -4,6 +4,7 @@ go 1.18
 
 require (
 	github.com/aws/aws-sdk-go v1.44.34
+	github.com/carlmjohnson/versioninfo v0.22.4
 	github.com/mattn/go-isatty v0.0.14
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/sirupsen/logrus v1.8.1
