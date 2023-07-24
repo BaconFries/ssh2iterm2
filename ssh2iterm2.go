@@ -442,7 +442,7 @@ func readTierConf(file string) (tiers config, err error) {
 	}
 
 	// Unmarshal the JSON data into the TiersConfig struct
-	err = json.Unmarshal(configData, &tiers)
+	err = yaml.Unmarshal(configData, &tiers)
 	if err != nil {
 		logrus.Error("Error unmarshaling configuration data:", err)
 		return
