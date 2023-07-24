@@ -2,7 +2,6 @@ aws-profile: coolprofile
 aws-region: us-east-1
 automatic-profile-switching: true
 domain-suffix: .cool.domain
-tier-map: /Users/bacon/.ssh/tier-map.json
 prod_background: /Users/bacon/Downloads/background-red.png
 prod_badge_color: FF2400
 lab_background: /Users/bacon/Downloads/background-blue.png

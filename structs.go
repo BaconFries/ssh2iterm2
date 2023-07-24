@@ -1,10 +1,6 @@
 package main
 
-type config struct {
-	SSH string `yaml:"ssh"`
-}
-
-type TiersConfig map[string]string
+type config map[string]string
 
 type profile struct {
 	Badge                   string `json:"Badge Text"`

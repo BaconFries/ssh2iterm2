@@ -58,13 +58,15 @@ func main() {
 	}
 
 	configPath := ""
+	tierMapPath := ""
 	userConfigDir, err := os.UserConfigDir()
 
 	if err == nil {
 		configPath = userConfigDir + "/ssh2iterm2.yaml"
+		tierMapPath = userConfigDir + "/tier-map.yaml"
 	}
 
-	app.Flags = createAppFlags(ssh, userHomeDir, configPath)
+	app.Flags = createAppFlags(ssh, userHomeDir, configPath, tierMapPath)
 
 	app.Before = func(c *cli.Context) error {
 		if _, err := os.Stat(configPath); !os.IsNotExist(err) {
@@ -96,7 +98,7 @@ func configLogger() {
 	logrus.SetLevel(logrus.DebugLevel)
 }
 
-func createAppFlags(ssh, userHomeDir, configPath string) []cli.Flag {
+func createAppFlags(ssh, userHomeDir, configPath, tierMapPath string) []cli.Flag {
 	return []cli.Flag{
 		altsrc.NewStringFlag(cli.StringFlag{
 			Name:   "domain-suffix",
@@ -113,13 +115,7 @@ func createAppFlags(ssh, userHomeDir, configPath string) []cli.Flag {
 			Usage:  "aws region",
 			EnvVar: "SSH2ITERM2_AWS_REGION",
 		}),
-		altsrc.NewStringFlag(cli.StringFlag{
-			Name:      "tier-map",
-			Value:     userHomeDir + "/.ssh/tier-map.json",
-			Usage:     "A json file containing a dictionary of host prefix to tier",
-			EnvVar:    "SSH2ITERM2_TIER_MAP",
-			TakesFile: true,
-		}),
+
 		altsrc.NewStringFlag(cli.StringFlag{
 			Name:   "prod_background",
 			Usage:  "A file path to an image used for prodution background",
@@ -159,6 +155,14 @@ func createAppFlags(ssh, userHomeDir, configPath string) []cli.Flag {
 			EnvVar:    "SSH2ITERM2_CONFIG_FILE",
 			TakesFile: true,
 		},
+
+		altsrc.NewStringFlag(cli.StringFlag{
+			Name:      "tier-map",
+			Value:     tierMapPath,
+			Usage:     "A yaml file containing host prefix to tier mapping",
+			EnvVar:    "SSH2ITERM2_TIER_MAP",
+			TakesFile: true,
+		}),
 	}
 }
 
@@ -179,6 +183,23 @@ func createAppCommands() []cli.Command {
 					Value:  "vi",
 					Usage:  "Use `EDITOR` to edit config file (create it of it doesn't exist)",
 					EnvVar: "EDITOR",
+				},
+			},
+		},
+		{
+			Name:   "edit-tier-map",
+			Usage:  "Edit tier map file",
+			Action: editConfig,
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:   "editor",
+					Value:  "vi",
+					Usage:  "Use `EDITOR` to edit config file (create it of it doesn't exist)",
+					EnvVar: "EDITOR",
+				},
+				cli.StringFlag{
+					Name:  "type",
+					Value: "tier-map",
 				},
 			},
 		},
@@ -293,19 +314,40 @@ func ssh2iterm2(c *cli.Context) error {
 	return nil
 }
 
-func editConfig(c *cli.Context) error {
-	configFile := c.GlobalString("config")
+func editConfig(ctx *cli.Context) error {
+	configFile := ctx.GlobalString("config")
+	configType := ctx.String("type")
+	if configType == "tier-map" {
+		configFile = ctx.GlobalString("tier-map")
+	}
 
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		err := createConfig(configFile, config{
-			SSH: c.GlobalString("ssh"),
-		})
+		conf := config{
+			"ssh": ctx.GlobalString("ssh"),
+		}
+		if configType == "tier-map" {
+			conf = config{
+				"esfh":                      "hot",
+				"esfw":                      "warm",
+				"esfm":                      "master",
+				"esfq":                      "query",
+				"ui":                        "kibana",
+				"!production":               "production",
+				"!production-v2":            "production-v2",
+				"!production-api-ingest":    "production-api-ingest",
+				"!production-api-ingest-v2": "production-api-ingest-v2",
+				"!production-api-beta":      "production-api-beta",
+				"!production-api-beta-v2":   "production-api-beta-v2",
+			}
+		}
+		err := createConfig(configFile, conf)
 		if err != nil {
 			return err
 		}
+
 	}
 
-	editCmd := c.String("editor") + " '" + configFile + "'"
+	editCmd := ctx.String("editor") + " '" + configFile + "'"
 	cmd := exec.Command("sh", "-c", editCmd)
 
 	cmd.Stdin = os.Stdin
@@ -378,7 +420,7 @@ func GetEC2InstanceTags(s *session.Session) (map[string]map[string]string, error
 	return ec2IntMap, nil
 }
 
-func getTier(tiers TiersConfig, name string) string {
+func getTier(tiers config, name string) string {
 	for prefix, tier := range tiers {
 		if strings.HasPrefix(prefix, "!") {
 			if name == strings.TrimPrefix(prefix, "!") {
@@ -392,7 +434,7 @@ func getTier(tiers TiersConfig, name string) string {
 	return ""
 }
 
-func readTierConf(file string) (tiers TiersConfig, err error) {
+func readTierConf(file string) (tiers config, err error) {
 	configData, err := ioutil.ReadFile(file)
 	if err != nil {
 		logrus.Error("Error reading configuration file:", err)
