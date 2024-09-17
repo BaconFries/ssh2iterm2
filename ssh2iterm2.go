@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"regexp"
 	"runtime/debug"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -98,7 +100,7 @@ func configLogger() {
 	logrus.SetLevel(logrus.DebugLevel)
 }
 
-func createAppFlags(ssh, userHomeDir, configPath, tierMapPath string) []cli.Flag {
+func createAppFlags(ssh, _, configPath, tierMapPath string) []cli.Flag {
 	return []cli.Flag{
 		altsrc.NewStringFlag(cli.StringFlag{
 			Name:   "domain-suffix",
@@ -225,6 +227,19 @@ func ssh2iterm2(c *cli.Context) error {
 	}
 
 	for _, am := range awsmap {
+		if _, isEKS := am["eks:cluster-name"]; isEKS {
+			logrus.Infof("Skipping EKS instance %s", am["Name"])
+			continue
+		}
+		if _, isBuild := am["Ec2ImageBuilderArn"]; isBuild {
+			logrus.Infof("Skipping Build instance %s", am["Name"])
+			continue
+		}
+		if len(am["PrivateIpAddress"]) == 0 {
+			logrus.Infof("Skipping No IP instance %s", am["Name"])
+			continue
+		}
+
 		subsystem := strings.ToLower(am["Subsystem"])
 		tier := getTier(tiers, am["Name"])
 		hostname := am["Name"]
@@ -274,20 +289,30 @@ func ssh2iterm2(c *cli.Context) error {
 			}
 
 			profiles.Profiles = append(profiles.Profiles, &profile{
-				Badge:         badge,
-				GUID:          generateUUIDFromString(name),
-				Name:          name,
-				Command:       c,
-				CustomCommand: "Yes",
-
+				Badge:                   badge,
+				GUID:                    generateUUIDFromString(name),
+				Name:                    name,
+				Command:                 c,
+				CustomCommand:           "Yes",
 				Tags:                    []string{tag},
 				BoundHosts:              boundHosts,
 				BackgroundImageLocation: backgroundImageLocation,
 				BadgeColor:              color,
 			})
 		}
-
 	}
+
+	sort.Slice(profiles.Profiles, func(i, j int) bool {
+		// Compare by tags (assuming you want to sort by the first tag)
+		if len(profiles.Profiles[i].Tags) > 0 && len(profiles.Profiles[j].Tags) > 0 {
+			if profiles.Profiles[i].Tags[0] != profiles.Profiles[j].Tags[0] {
+				return profiles.Profiles[i].Tags[0] < profiles.Profiles[j].Tags[0]
+			}
+		}
+
+		// If the tags are identical, compare by name alphanumerically
+		return alphanumericLess(profiles.Profiles[i].Name, profiles.Profiles[j].Name)
+	})
 
 	json, err := json.MarshalIndent(profiles, "", "    ")
 	if err != nil {
@@ -506,4 +531,39 @@ func getVersion() string {
 	}
 
 	return version
+}
+
+// Helper function to split a string into its alphanumeric parts
+func alphanumericLess(a, b string) bool {
+	// Function to split a string into chunks of digits and non-digits
+	split := func(r string) []string {
+		re := regexp.MustCompile(`(\d+|\D+)`)
+		return re.FindAllString(r, -1)
+	}
+
+	aParts := split(a)
+	bParts := split(b)
+
+	// Compare each part of the strings
+	for i := 0; i < len(aParts) && i < len(bParts); i++ {
+		aPart := aParts[i]
+		bPart := bParts[i]
+
+		// If both parts are numeric, compare them as numbers
+		aNum, aErr := strconv.Atoi(aPart)
+		bNum, bErr := strconv.Atoi(bPart)
+		if aErr == nil && bErr == nil {
+			if aNum != bNum {
+				return aNum < bNum
+			}
+		} else {
+			// Compare them as strings
+			if aPart != bPart {
+				return aPart < bPart
+			}
+		}
+	}
+
+	// If we compared all parts and they were the same, the shorter string is "less"
+	return len(aParts) < len(bParts)
 }
