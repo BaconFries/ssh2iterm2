@@ -309,6 +309,7 @@ func ssh2iterm2(c *cli.Context) error {
 				BackgroundImageLocation: backgroundImageLocation,
 				BadgeColor:              color,
 				BackgroundColor:         parseHexColor(ColorBlack),
+				ForegroundColor:         parseHexColor(ColorWhite),
 			})
 		}
 	}
