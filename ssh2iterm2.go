@@ -33,6 +33,16 @@ var (
 	version string
 )
 
+const (
+	ColorBlack       = "#000000"
+	ColorWhite       = "#FFFFFF"
+	ColorRed         = "#FF0000"
+	ColorGreen       = "#00FF00"
+	ColorBlue        = "#0000FF"
+	ColorSilver      = "#868686"
+	ColorTransparent = "#00000000" // for alpha
+)
+
 func main() {
 
 	configLogger()
@@ -257,7 +267,7 @@ func ssh2iterm2(c *cli.Context) error {
 			"subsystem": subsystem,
 			"ip":        ip,
 		}).Infof("Processing EC2 Instance")
-		color := parseHexColor("868686")
+		color := parseHexColor(ColorSilver)
 		if len(site) > 0 {
 			tag = fmt.Sprintf("%s/%s", site, subsystem)
 			if tier != "" {
@@ -298,6 +308,7 @@ func ssh2iterm2(c *cli.Context) error {
 				BoundHosts:              boundHosts,
 				BackgroundImageLocation: backgroundImageLocation,
 				BadgeColor:              color,
+				BackgroundColor:         parseHexColor(ColorBlack),
 			})
 		}
 	}
@@ -483,36 +494,51 @@ func generateUUIDFromString(input string) string {
 	return uuidString
 }
 
-func parseHexColor(hexColor string) BadgeColorComponent {
-
-	badgeColor := BadgeColorComponent{
+// parseHexColor converts a hex color string (e.g., "#FF5733" or "#F53") to a ColorComponent.
+// Supports 3-digit (shorthand) and 6-digit hex colors. Alpha is optional (defaults to 1).
+func parseHexColor(hexColor string) ColorComponent {
+	// Default color (white)
+	defaultColor := ColorComponent{
 		RedComponent:   1,
-		ColorSpace:     "sRGB",
+		GreenComponent: 1,
 		BlueComponent:  1,
 		AlphaComponent: 1,
-		GreenComponent: 1,
+		ColorSpace:     "sRGB",
 	}
-	// Remove the '#' prefix if present
-	if hexColor[0] == '#' {
+
+	// Remove '#' prefix if present
+	if len(hexColor) > 0 && hexColor[0] == '#' {
 		hexColor = hexColor[1:]
 	}
 
-	// Parse the hex string into individual RGB components
-	var hexValue uint32
-	_, err := fmt.Sscanf(hexColor, "%x", &hexValue)
+	// Validate length
+	if len(hexColor) == 3 {
+		// Convert 3-digit hex (e.g., "F53") to 6-digit (e.g., "FF5533")
+		hexColor = fmt.Sprintf("%c%c%c%c%c%c", hexColor[0], hexColor[0], hexColor[1], hexColor[1], hexColor[2], hexColor[2])
+	} else if len(hexColor) != 6 {
+		// Invalid length
+		return defaultColor
+	}
+
+	// Parse hex value
+	var value uint32
+	_, err := fmt.Sscanf(hexColor, "%x", &value)
 	if err != nil {
-		return badgeColor
+		return defaultColor
 	}
 
-	badgeColor = BadgeColorComponent{
-		RedComponent:   float64(uint8(hexValue>>16)) / 255.0,
-		ColorSpace:     "sRGB",
-		BlueComponent:  float64(uint8(hexValue)) / 255.0,
+	// Extract components
+	r := float64(uint8(value>>16)) / 255.0
+	g := float64(uint8(value>>8)) / 255.0
+	b := float64(uint8(value)) / 255.0
+
+	return ColorComponent{
+		RedComponent:   r,
+		GreenComponent: g,
+		BlueComponent:  b,
 		AlphaComponent: 1,
-		GreenComponent: float64(uint8(hexValue>>8)) / 255.0,
+		ColorSpace:     "sRGB",
 	}
-
-	return badgeColor
 }
 
 func getVersion() string {
