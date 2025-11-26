@@ -15,6 +15,6 @@ clean:
 	go clean
 
 install:
-	cp ${BINARY_NAME} /usr/local/bin/
-	chmod +x /usr/local/bin/${BINARY_NAME}
+	cp ${BINARY_NAME} ~/.local/bin/
+	chmod +x ~/.local/bin/${BINARY_NAME}
 
